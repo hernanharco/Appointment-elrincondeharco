@@ -1,18 +1,18 @@
 ---
 // src/pages/login.astro
-// Responsabilidad única: página de login con Google OAuth
+// Responsabilidad única: Interfaz de acceso y redirección dinámica al flujo OAuth.
 
-const redirectParam    = Astro.url.searchParams.get('redirect') ?? '/';
-const GOOGLE_CLIENT_ID = import.meta.env.PUBLIC_GOOGLE_CLIENT_ID;
+const redirectParam = Astro.url.searchParams.get('redirect') ?? 'dashboard';
+const errorParam    = Astro.url.searchParams.get('error');
 
+// Si ya existe una cookie de sesión, redirigimos internamente
 const token = Astro.cookies.get('access_token')?.value;
 if (token) {
-  return Astro.redirect(redirectParam);
+  return Astro.redirect(redirectParam.startsWith('/') ? redirectParam : `/${redirectParam}`);
 }
 
-// Rutas del proxy local — sin depender de api.ts
-const ROUTE_AUTH_GOOGLE = '/api/auth/google';
-const ROUTE_PENDING     = '/pending';
+// URL base de tu backend de Auth (authCore)
+const BACKEND_AUTH_URL = import.meta.env.PUBLIC_AUTH_API_URL + '/api/v1/auth/google';
 ---
 
 <!DOCTYPE html>
@@ -26,7 +26,6 @@ const ROUTE_PENDING     = '/pending';
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
       --bg: #09090b;
       --surface: #111114;
@@ -36,12 +35,9 @@ const ROUTE_PENDING     = '/pending';
       --muted: #4a4b55;
       --muted-2: #6b6c78;
       --accent: #4a6cf7;
-      --google-border: #2a2a30;
-      --google-hover: #1c1c22;
       --error: #f87171;
       --error-bg: rgba(248,113,113,0.07);
     }
-
     body {
       font-family: 'DM Sans', sans-serif;
       background: var(--bg);
@@ -51,9 +47,7 @@ const ROUTE_PENDING     = '/pending';
       align-items: center;
       justify-content: center;
       padding: 1.5rem;
-      overflow: hidden;
     }
-
     .bg-grid {
       position: fixed;
       inset: 0;
@@ -61,19 +55,9 @@ const ROUTE_PENDING     = '/pending';
         linear-gradient(rgba(74,108,247,0.04) 1px, transparent 1px),
         linear-gradient(90deg, rgba(74,108,247,0.04) 1px, transparent 1px);
       background-size: 48px 48px;
-      pointer-events: none;
       mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
-    }
-
-    .bg-glow {
-      position: fixed;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      width: 700px; height: 700px;
-      background: radial-gradient(circle, rgba(74,108,247,0.07) 0%, transparent 65%);
       pointer-events: none;
     }
-
     .card {
       position: relative;
       z-index: 1;
@@ -83,281 +67,118 @@ const ROUTE_PENDING     = '/pending';
       padding: 2.75rem 2.25rem 2.25rem;
       width: 100%;
       max-width: 400px;
-      box-shadow:
-        0 0 0 1px rgba(255,255,255,0.03) inset,
-        0 40px 100px rgba(0,0,0,0.7),
-        0 8px 32px rgba(0,0,0,0.4);
-      animation: appear 0.3s cubic-bezier(0.34, 1.2, 0.64, 1);
+      box-shadow: 0 40px 100px rgba(0,0,0,0.7);
+      animation: appear 0.4s cubic-bezier(0.34, 1.2, 0.64, 1);
     }
-
     @keyframes appear {
-      from { opacity: 0; transform: translateY(20px) scale(0.97); }
-      to   { opacity: 1; transform: translateY(0) scale(1); }
+      from { opacity: 0; transform: translateY(15px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
-
     .brand {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 2.25rem;
+      gap: 10px;
+      margin-bottom: 2rem;
     }
-
-    .brand-icon {
-      width: 32px; height: 32px;
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .brand-dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      background: var(--accent);
-      box-shadow: 0 0 12px var(--accent);
-    }
-
-    .brand-name {
-      font-size: 12px;
-      font-weight: 600;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
-      color: var(--muted-2);
-    }
-
-    h1 {
-      font-size: 1.75rem;
-      font-weight: 700;
-      letter-spacing: -0.04em;
-      line-height: 1.2;
-      margin-bottom: 6px;
-    }
-
-    h1 span {
-      background: linear-gradient(135deg, #e8eaf0 30%, #6b7280);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    .subtitle {
-      font-size: 13.5px;
-      color: var(--muted-2);
-      margin-bottom: 2.25rem;
-      line-height: 1.5;
-    }
-
+    .brand-icon { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+    .brand-name { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-2); }
+    h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .subtitle { font-size: 0.9rem; color: var(--muted-2); margin-bottom: 2rem; }
     .error-banner {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 8px;
       background: var(--error-bg);
       border: 1px solid rgba(248,113,113,0.2);
       border-radius: 10px;
       color: var(--error);
       font-size: 13px;
-      padding: 10px 12px;
-      margin-bottom: 1.25rem;
-      line-height: 1.4;
+      padding: 12px;
+      margin-bottom: 1.5rem;
     }
-
     .google-btn {
       width: 100%;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
+      gap: 12px;
       background: var(--surface-2);
-      border: 1px solid var(--google-border);
+      border: 1px solid var(--border);
       border-radius: 12px;
       color: var(--text);
-      font-family: inherit;
-      font-size: 14.5px;
+      font-size: 15px;
       font-weight: 500;
-      padding: 13px 20px;
+      padding: 14px;
       cursor: pointer;
-      transition: background 0.15s, border-color 0.15s, transform 0.1s, box-shadow 0.15s;
-      position: relative;
-      overflow: hidden;
+      transition: all 0.2s;
     }
-
-    .google-btn::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(135deg, rgba(255,255,255,0.03), transparent);
-      pointer-events: none;
-    }
-
-    .google-btn:hover:not(:disabled) {
-      background: var(--google-hover);
-      border-color: #363640;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    }
-
-    .google-btn:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
+    .google-btn:hover { background: #1c1c22; border-color: #363640; transform: translateY(-1px); }
     .google-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-    .spinner {
-      width: 16px; height: 16px;
-      border: 2px solid rgba(255,255,255,0.2);
-      border-top-color: rgba(255,255,255,0.7);
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      flex-shrink: 0;
-    }
-
+    .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .google-logo { flex-shrink: 0; }
-
-    .security-badge {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      margin-top: 1.5rem;
-      font-size: 11.5px;
-      color: var(--muted);
-    }
+    .security-badge { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 2rem; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
   </style>
 </head>
 <body>
   <div class="bg-grid"></div>
-  <div class="bg-glow"></div>
 
   <div class="card">
     <div class="brand">
-      <div class="brand-icon"><span class="brand-dot"></span></div>
+      <div class="brand-icon"></div>
       <span class="brand-name">CoreAppointment</span>
     </div>
 
-    <h1><span>Bienvenido de vuelta</span></h1>
-    <p class="subtitle">Accede a tu panel de administración con tu cuenta de Google.</p>
+    <h1>Acceder</h1>
+    <p class="subtitle">Gestiona tus citas y servicios de forma centralizada.</p>
 
-    <div id="error-container" style="display:none" class="error-banner">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/>
-        <path d="M7 4v3M7 9v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-      </svg>
-      <span id="error-msg"></span>
-    </div>
+    {errorParam && (
+      <div class="error-banner">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span>Error de autenticación. Inténtalo de nuevo.</span>
+      </div>
+    )}
 
-    <button id="google-btn" class="google-btn" type="button">
-      <svg class="google-logo" width="18" height="18" viewBox="0 0 18 18" fill="none">
-        <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/>
-        <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/>
-        <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" fill="#FBBC05"/>
-        <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z" fill="#EA4335"/>
+    <button id="google-btn" class="google-btn">
+      <svg width="18" height="18" viewBox="0 0 18 18">
+        <path d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.91c1.7-1.57 2.68-3.88 2.68-6.62z" fill="#4285F4"/>
+        <path d="M9 18c2.43 0 4.47-.81 5.96-2.18l-2.91-2.26c-.8.54-1.84.86-3.05.86-2.34 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 0 0 9 18z" fill="#34A853"/>
+        <path d="M3.96 10.71a5.41 5.41 0 0 1-.28-1.71c0-.59.1-1.17.28-1.71V4.96H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.04l3-2.33z" fill="#FBBC05"/>
+        <path d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 6.48 0 4.27 1.45 3.2 3.58l3.01 2.33c.71-2.13 2.7-3.71 9-3.71z" fill="#EA4335"/>
       </svg>
       <span>Continuar con Google</span>
     </button>
 
     <div class="security-badge">
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-        <path d="M6 1L2 2.5v4c0 2.5 1.8 4.2 4 4.8 2.2-.6 4-2.3 4-4.8v-4L6 1z" stroke="currentColor" stroke-width="1"/>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
       </svg>
-      Conexión segura · Solo administradores
+      Autenticación Segura SSL
     </div>
   </div>
 
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script define:vars={{ BACKEND_AUTH_URL, redirectParam }}>
+    const btn = document.getElementById('google-btn');
 
-  <script define:vars={{ redirectParam, GOOGLE_CLIENT_ID, ROUTE_AUTH_GOOGLE, ROUTE_PENDING }}>
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div><span>Conectando...</span>';
 
-    const btn            = document.getElementById('google-btn');
-    const errorContainer = document.getElementById('error-container');
-    const errorMsg       = document.getElementById('error-msg');
-    const origin         = window.location.hostname + window.location.pathname;
+      /** 
+       * 💡 EL CAMBIO CLAVE:
+       * Capturamos window.location.origin (ej: http://localhost:4321)
+       * y lo unimos con la ruta de destino.
+       */
+      const currentOrigin = window.location.origin;
+      const cleanPath = redirectParam.replace(/^\//, ''); // Evita doble slash
+      const fullReturnUrl = `${currentOrigin}/${cleanPath}`;
 
-    const GOOGLE_SVG = `
-      <svg class="google-logo" width="18" height="18" viewBox="0 0 18 18" fill="none">
-        <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z" fill="#4285F4"/>
-        <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z" fill="#34A853"/>
-        <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z" fill="#FBBC05"/>
-        <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z" fill="#EA4335"/>
-      </svg>
-      <span>Continuar con Google</span>`;
+      // Enviamos la URL completa al backend
+      const authUrl = `${BACKEND_AUTH_URL}?redirect_to=${encodeURIComponent(fullReturnUrl)}`;
 
-    function showError(msg) {
-      errorMsg.textContent = msg;
-      errorContainer.style.display = 'flex';
-      setLoading(false);
-    }
-
-    function setLoading(loading) {
-      btn.disabled = loading;
-      btn.innerHTML = loading
-        ? '<span class="spinner"></span><span>Verificando…</span>'
-        : GOOGLE_SVG;
-    }
-
-    async function handleGoogleCode(code) {
-      setLoading(true);
-      errorContainer.style.display = 'none';
-
-      try {
-        // ✅ Proxy local — misma origin que Astro
-        const response = await fetch(ROUTE_AUTH_GOOGLE, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ token: code, origin }),
-        });
-
-        const data = await response.json().catch(() => ({}));
-
-        if (data.detail === 'PENDING_APPROVAL') {
-          window.location.href = ROUTE_PENDING;
-          return;
-        }
-
-        if (!response.ok) {
-          throw new Error(data.detail || `Error ${response.status}`);
-        }
-
-        window.location.href = redirectParam;
-
-      } catch (err) {
-        showError(err.message || 'No se pudo conectar con el servidor');
-      }
-    }
-
-    function initGoogleAuth() {
-      if (!window.google) { setTimeout(initGoogleAuth, 100); return; }
-
-      if (!GOOGLE_CLIENT_ID) {
-        console.error('❌ Falta PUBLIC_GOOGLE_CLIENT_ID en .env');
-        return;
-      }
-
-      btn.addEventListener('click', () => {
-        errorContainer.style.display = 'none';
-        const client = google.accounts.oauth2.initCodeClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: 'openid email profile',
-          ux_mode: 'popup',
-          callback: (response) => {
-            if (response.code) {
-              handleGoogleCode(response.code);
-            } else {
-              showError('No se recibió código de autorización de Google');
-            }
-          },
-          error_callback: (error) => {
-            if (error.type !== 'popup_closed') {
-              showError('Error al abrir Google: ' + (error.message || error.type));
-            }
-            setLoading(false);
-          },
-        });
-        client.requestCode();
-      });
-    }
-
-    document.addEventListener('DOMContentLoaded', initGoogleAuth);
+      window.location.href = authUrl;
+    });
   </script>
 </body>
 </html>

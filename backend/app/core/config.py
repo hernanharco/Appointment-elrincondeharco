@@ -1,12 +1,36 @@
 from typing import Optional, List
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from pydantic import Field, computed_field
 
 class Settings(BaseSettings):
     """
     Configuración centralizada del SaaS.
     Mapea las variables del archivo .env a atributos de Python.
     """
+
+    # --- Base de Datos (Variables individuales) ---
+    pg_host: str = Field(..., alias="PGHOST")
+    pg_port: int = Field(5432, alias="PGPORT")
+    pg_database: str = Field(..., alias="PGDATABASE")
+    pg_user: str = Field(..., alias="PGUSER")
+    pg_password: str = Field(..., alias="PGPASSWORD")
+    pg_schema: str = Field("public", alias="PGSCHEMA")
+    pg_sslmode: str = Field("disable", alias="PGSSLMODE")
+    pg_channel_binding: str = Field("disable", alias="PGCHANNELBINDING")
+
+    @computed_field
+    @property
+    def database_url(self) -> str:
+        """
+        Construye la URL de conexión asíncrona para SQLAlchemy + Psycopg3.
+        Aplica aislamiento de Schema mediante search_path.
+        """
+        return (
+            f"postgresql+psycopg://{self.pg_user}:{self.pg_password}@"
+            f"{self.pg_host}:{self.pg_port}/{self.pg_database}?"
+            f"options=-csearch_path%3D{self.pg_schema}&"
+            f"sslmode={self.pg_sslmode}"
+        )
 
     # --- Configuración de Pydantic ---
     model_config = SettingsConfigDict(

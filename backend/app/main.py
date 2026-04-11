@@ -1,21 +1,26 @@
-from fastapi import FastAPI, Depends, Request
+import os
+import sys
+import time
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import uvicorn
+from fastapi import FastAPI, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from contextlib import asynccontextmanager
-import uvicorn
-import time
-import os
+from sqlalchemy import text, inspect, schema
 
 from app.core.config import settings
-from app.db.session import get_db, create_tables
+from app.db.session import SessionLocal, engine
+from app.models.base import Base  # Asegúrate de que tus modelos hereden de esta Base
 from app.api.v1.api_route import api_router
 from app.models.metrics import ApiRouteMetric
-from app.db.session import SessionLocal
-from fastapi import BackgroundTasks
 
-
-# 2. Crea una función de ayuda fuera del middleware
+# --- Lógica de Métricas (SRP: Responsabilidad Única) ---
 def save_metric_task(path: str, method: str, status_code: int, process_time: float):
+    """Guarda métricas de las rutas en segundo plano para no ralentizar la respuesta."""
     db = SessionLocal()
     try:
         new_metric = ApiRouteMetric(
@@ -25,105 +30,111 @@ def save_metric_task(path: str, method: str, status_code: int, process_time: flo
         db.add(new_metric)
         db.commit()
     except Exception as e:
-        print(f"⚠️ Error guardando métricas en background: {e}")
+        print(f"⚠️ Error guardando métricas: {e}")
     finally:
         db.close()
 
-
-# 1. Definimos el ciclo de vida (Lifespan)
-# Este reemplaza a @app.on_event("startup")
+# --- Ciclo de Vida de la Aplicación (Lifespan) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"🚀 Starting FastAPI app in {settings.ENVIRONMENT} mode")
-
-    # ── LangSmith ────────────────────────────────────────────────────────────
-    # --- CONFIGURACIÓN DE LANGSMITH (TRACING) ---
-    if settings.LANGSMITH_TRACING:
-        os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        os.environ["LANGCHAIN_API_KEY"] = settings.LANGSMITH_API_KEY
-        os.environ["LANGCHAIN_PROJECT"] = settings.LANGSMITH_PROJECT
-        os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGSMITH_ENDPOINT or "https://api.smith.langchain.com"
-        print("📊 LangSmith Tracing: ENABLED")
-    else:
-        os.environ["LANGCHAIN_TRACING_V2"] = "false"
-        print("📊 LangSmith Tracing: DISABLED")
-    # --------------------------------------------
-
-    # ── Timezone ──────────────────────────────────────────────────────────────
-    # --- VERIFICACIÓN DE ZONA HORARIA ---
-    import pytz
-    from datetime import datetime
+    # 1. Configuración de Bienvenida y Timezone
+    print(f"🚀 Starting FastAPI app: {settings.TITLE_BACKEND}")
+    print(f"🛠️ Environment: {settings.ENVIRONMENT}")
+    
     try:
-        current_tz = pytz.timezone(settings.APP_TIMEZONE)
-        local_time = datetime.now(current_tz)
-        print(f"🌍 Timezone: {settings.APP_TIMEZONE}")
-        print(f"🕒 Local Time: {local_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        local_tz = ZoneInfo(settings.APP_TIMEZONE)
+        local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"🌍 Timezone: {local_tz} | 🕒 Local Time: {local_time}")
     except Exception as e:
-        print(f"❌ Error configurando zona horaria: {e}")
-    # ------------------------------------
+        print(f"❌ Error de Timezone: {e}")
 
-    # ── Database ──────────────────────────────────────────────────────────────
-    # En lugar de imprimir settings.DATABASE_URL completo:
-    if settings.DATABASE_URL:
-        print("🔗 Database URL: Configurada correctamente (Oculta por seguridad)")
-    else:
-        print("🔗 Database URL: No encontrada o incorrecta")
-    # Aquí podrías conectar a Redis o cargar un modelo de IA pesado
-    create_tables()
+    # 2. Configuración de LangSmith (Tracing)
+    if settings.LANGSMITH_TRACING:
+        os.environ.update({
+            "LANGCHAIN_TRACING_V2": "true",
+            "LANGCHAIN_API_KEY": settings.LANGSMITH_API_KEY,
+            "LANGCHAIN_PROJECT": settings.LANGSMITH_PROJECT,
+            "LANGCHAIN_ENDPOINT": settings.LANGSMITH_ENDPOINT or "https://api.smith.langchain.com"
+        })
+        print("📊 LangSmith Tracing: ENABLED")
 
-    # ── LangGraph Checkpointer ────────────────────────────────────────────────
+    # 3. Sincronización de Base de Datos y Schemas
+    print(f"--- Verificando conexión a {settings.NAME_DATABASE} ---")
+    try:
+        def sync_db():
+            with engine.connect() as conn:
+                # A. Crear el esquema si no es el 'public' y no existe
+                if settings.pg_schema and settings.pg_schema != "public":
+                    print(f"🛠️ Asegurando existencia del esquema: {settings.pg_schema}")
+                    conn.execute(schema.CreateSchema(settings.pg_schema, if_not_exists=True))
+                    conn.commit()
+
+                # B. Inspección de tablas existentes en el esquema configurado
+                inspector = inspect(conn)
+                existing_tables = inspector.get_table_names(schema=settings.pg_schema)
+                metadata_tables = Base.metadata.tables.keys()
+                
+                # Identificar qué hay de nuevo
+                new_tables = [t for t in metadata_tables if t not in existing_tables]
+                
+                # C. Crear tablas y tipos (como los ENUMs que fallaban)
+                Base.metadata.create_all(bind=engine)
+                
+                if new_tables:
+                    print(f"✅ Tablas creadas en '{settings.pg_schema}': {', '.join(new_tables)}")
+                else:
+                    print(f"info: Schema '{settings.pg_schema}' ya está sincronizado.")
+
+        # Ejecutamos la lógica síncrona de SQLAlchemy en un hilo separado
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, sync_db)
+
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO EN DB: {str(e)}", file=sys.stderr)
+        # En desarrollo podrías querer que siga, en prod mejor que falle el despliegue
+        if settings.is_production:
+            raise
+
+    # 4. LangGraph Checkpointer (Persistencia de Agentes)
     from app.agents.routing.graph import graph
-
     if settings.USE_PERSISTENT_CHECKPOINTS and settings.LANGGRAPH_DATABASE_URL:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         async with AsyncPostgresSaver.from_conn_string(settings.LANGGRAPH_DATABASE_URL) as checkpointer:
             await checkpointer.setup()
             graph.checkpointer = checkpointer
-            print("✅ LangGraph: PostgreSQL checkpointer activo (Neon)")
-            yield  # ← ÚNICO yield, dentro del async with
+            print("✅ LangGraph: PostgreSQL checkpointer activo")
+            yield
     else:
         from langgraph.checkpoint.memory import MemorySaver
         graph.checkpointer = MemorySaver()
-        print("✅ LangGraph: MemorySaver activo (desarrollo)")
-        yield  # ← ÚNICO yield en el else
+        print("✅ LangGraph: MemorySaver activo (Desarrollo)")
+        yield
 
-    # ── Shutdown ──────────────────────────────────────────────────────────────
-    # --- CIERRE (SHUTDOWN) ---
-    print("👋 Iniciando proceso de apagado...")
-
-    # Ejemplo 1: Cerrar todas las conexiones a la DB para no saturar a Neon
-    from app.db.session import engine
+    # 5. Shutdown (Apagado limpio)
+    print("👋 Cerrando aplicación...")
     engine.dispose()
-    print("🔌 Conexiones a la base de datos cerradas.")
+    print("🔌 Conexiones de DB liberadas.")
 
-    # Ejemplo 2: Si tuvieras un sistema de logs en archivo, podrías cerrarlo
-    print("💾 Logs guardados y archivos cerrados.")
-
-    # Ejemplo 3: Limpiar memoria temporal
-    print("🧹 Memoria temporal liberada.")
-
-    print("✅ Apagado completo. ¡Hasta pronto!")
-
-
-# 2. Inicializamos FastAPI con el lifespan
+# --- Inicialización de FastAPI ---
 app = FastAPI(
     title=settings.TITLE_BACKEND,
-    description=settings.TITLE_BACKEND + " application with " + settings.NAME_DATABASE + " integration",
+    description=f"Core API para {settings.BUSINESS_NAME}",
     version="1.0.0",
     debug=settings.DEBUG,
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs",
+    openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# Revisa cual api esta consumiendo mas la base de datos
-# 3. Modifica el Middleware
+# --- Middlewares ---
+
+# Middleware de Métricas (Background Tasks)
 @app.middleware("http")
 async def log_route_metrics(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
     process_time = time.perf_counter() - start_time
 
-    # 🚀 MAGIA: Usamos BackgroundTasks para no bloquear el flujo principal
-    # Extraemos los datos necesarios antes para evitar problemas con el objeto request
     background_tasks = BackgroundTasks()
     background_tasks.add_task(
         save_metric_task,
@@ -131,73 +142,47 @@ async def log_route_metrics(request: Request, call_next):
         response.status_code, process_time
     )
     response.background = background_tasks
-
     return response
 
-# 3. CORS Middleware dinámico
-# Ahora toma la lista procesada desde tu Settings
+# Middleware de CORS
 app.add_middleware(
     CORSMiddleware,
-    # 1. Usamos la propiedad que calcula la lista de dominios
     allow_origins=settings.allow_origins,
     allow_credentials=True,
-    # 2. Simplificamos la lógica de métodos
-    # Si no es producción (es decir, desarrollo), permitimos todo "*"
-    # Si es producción, limitamos a los métodos estándar
     allow_methods=["*"] if not settings.is_production else ["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
-# 4. Incluir router de API v1
+# --- Inclusión de Rutas ---
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
     return {
-        "message": settings.TITLE_BACKEND + " API is running",
-        "environment": settings.ENVIRONMENT,
-        "debug": settings.DEBUG
+        "app": settings.TITLE_BACKEND,
+        "status": "online",
+        "timestamp": datetime.now().isoformat()
     }
 
 @app.get("/health")
-async def health_check(db: Session = Depends(get_db)):
-    """
-    Endpoint de salud que verifica la conexión real a Neon de authCore
-    """
+async def health_check():
+    """Verificación de salud rápida."""
     try:
-        from sqlalchemy import text  # Importante para SQLAlchemy 2.0
-        db.execute(text("SELECT 1"))
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
         return {
-            "status": "healthy " + settings.TITLE_BACKEND,
-            "environment": settings.ENVIRONMENT,
-            "db_provider": settings.NAME_DATABASE,
-            "database": "connected"
+            "status": "healthy",
+            "database": "connected",
+            "schema": settings.pg_schema
         }
     except Exception as e:
-        return {
-            "status": "unhealthy " + settings.TITLE_BACKEND,
-            "environment": settings.ENVIRONMENT,
-            "db_provider": settings.NAME_DATABASE,
-            "database": "disconnected",
-            "error": str(e)
-        }
+        return {"status": "unhealthy", "error": str(e)}
 
-@app.get("/info")
-async def app_info():
-    return {
-        "app_name": settings.TITLE_BACKEND,
-        "version": "1.0.0",
-        "environment": settings.ENVIRONMENT,
-        "debug": settings.DEBUG,
-        "is_production": settings.is_production,
-        "is_development": settings.ENVIRONMENT == "development"
-    }
-
+# --- Punto de entrada para ejecución directa ---
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=settings.ENVIRONMENT == "development",
-        log_level="debug" if settings.DEBUG else "info"
+        port=8001,
+        reload=settings.ENVIRONMENT == "development"
     )

@@ -1,6 +1,7 @@
 /**
  * NÚCLEO DE COMUNICACIÓN API
  * Toda configuración viene del .env — sin datos estáticos en el código.
+ * Proyecto Appointment
  */
 
 const BASE_URL      = import.meta.env.PUBLIC_API_BACKEND;
