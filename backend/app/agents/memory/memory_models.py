@@ -2,10 +2,10 @@ from sqlalchemy import Column, Integer, String, DateTime
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
 
-from app.models.base import Base
+from app.models.base import Base, MultiTenantBase
 
 
-class UserMemory(Base):
+class UserMemory(Base, MultiTenantBase):
 
     __tablename__ = "user_memories"
 
@@ -20,7 +20,7 @@ class UserMemory(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class ChatMessage(Base):
+class ChatMessage(Base, MultiTenantBase):
 
     __tablename__ = "chat_messages"
 
