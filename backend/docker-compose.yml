@@ -1,9 +1,9 @@
 services:
-  bkd-authcore:
+  bkd-appointment:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: authcore-backend
+    container_name: appointment-backend
     restart: always
     ports:
       - "8000:8000"

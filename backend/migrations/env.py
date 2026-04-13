@@ -43,6 +43,12 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         # 1. Asegurar existencia del Mundo (Schema)
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}"))
+        
+        # --- SOLUCIÓN DE RAÍZ: Activar pgvector ---
+        # Esto permite que PostgreSQL reconozca el tipo 'vector' 
+        # antes de intentar crear las tablas de los agentes.
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        
         connection.execute(text(f"SET search_path TO {SCHEMA_NAME}"))
         connection.commit()
 
