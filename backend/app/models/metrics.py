@@ -5,11 +5,8 @@ from app.models.base import Base
 from app.core.config import settings # Importamos settings
 
 class ApiRouteMetric(Base):
-    __tablename__ = "api_route_metrics"
+    __tablename__ = "api_route_metrics"   
     
-    # IMPORTANTE: Forzamos el esquema definido en el .env
-    __table_args__ = {"schema": settings.pg_schema}
-
     id = Column(Integer, primary_key=True, index=True)
     path = Column(String(255), nullable=False)
     method = Column(String(10), nullable=False)

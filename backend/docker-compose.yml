@@ -18,7 +18,7 @@ services:
       # Las variables se cargarán desde el .env automáticamente
     
     env_file:
-      - .env
+      - .env.development
 
 # Docker creará una red interna 'default' solo para este proyecto.
 # El puerto 8000 queda abierto para que CUALQUIERA (incluido tu frontend) lo llame.
