@@ -23,12 +23,12 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """
         URL de conexión para SQLAlchemy + Psycopg3.
-        Inyecta automáticamente el search_path para multi-tenant vía Schemas.
+        Inyecta automáticamente el search_path con soporte para extensiones.
         """
         return (
             f"postgresql+psycopg://{self.pg_user}:{self.pg_password}@"
             f"{self.pg_host}:{self.pg_port}/{self.pg_database}?"
-            f"options=-csearch_path%3D{self.pg_schema}&"
+            f"options=-csearch_path%3D{self.pg_schema},public&"
             f"sslmode={self.pg_sslmode}"
         )
 
@@ -38,13 +38,13 @@ class Settings(BaseSettings):
     USE_PERSISTENT_CHECKPOINTS: bool = False
     LANGGRAPH_DATABASE_URL: Optional[str] = None
 
-    # --- Configuración del Negocio (Inyectada vía Config) ---
+    # --- Configuración del Negocio ---
     BUSINESS_NAME: str = "Default Business Name"
-    TITLE_BACKEND: str = "Default API Title"
+    TITLE_BACKEND: str = "authAppointment-Backend"
     NAME_DATABASE: str = "Default Database Name"
 
     # --- Entorno y Debug ---
-    ENVIRONMENT: str = "development"  # 'production' o 'development'
+    ENVIRONMENT: str = "development" 
     DEBUG: bool = True
     APP_TIMEZONE: str = "Europe/Madrid"
 
@@ -57,7 +57,6 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # --- CORS Settings ---
-    # En el .env: CORS_ORIGINS=https://dom1.com,https://dom2.com
     CORS_ORIGINS: str = "http://localhost:3000"
 
     # --- Integraciones Externas ---
@@ -74,26 +73,17 @@ class Settings(BaseSettings):
     LANGSMITH_API_KEY: str = ""
     LANGSMITH_PROJECT: str = ""
 
-    # --- Propiedades Calculadas ---
     @property
     def is_production(self) -> bool:
-        """Helper para lógica condicional de producción."""
         return self.ENVIRONMENT.lower() == "production"
 
     @property
     def allow_origins(self) -> List[str]:
-        """
-        Limpia y formatea los orígenes permitidos para evitar bloqueos de CORS.
-        Elimina espacios y la barra final (/) que rompe la validación del navegador.
-        """
         if not self.CORS_ORIGINS:
             return []
-        
-        # Separar por comas, quitar espacios y eliminar barras finales
         origins = [origin.strip().rstrip('/') for origin in self.CORS_ORIGINS.split(",")]
         return origins
 
-    # --- Configuración de Pydantic ---
     model_config = SettingsConfigDict(
         env_file=".env", 
         env_file_encoding="utf-8", 
@@ -101,5 +91,4 @@ class Settings(BaseSettings):
         populate_by_name=True
     )
 
-# Instancia única (Singleton) para todo el proyecto
 settings = Settings()
