@@ -47,7 +47,8 @@ def run_migrations_online() -> None:
         # --- SOLUCIÓN DE RAÍZ: Activar pgvector ---
         # Esto permite que PostgreSQL reconozca el tipo 'vector' 
         # antes de intentar crear las tablas de los agentes.
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # En env.py dentro de run_migrations_online
+        connection.execute(text(f"CREATE EXTENSION IF NOT EXISTS vector SCHEMA {SCHEMA_NAME} CASCADE"))
         
         connection.execute(text(f"SET search_path TO {SCHEMA_NAME}"))
         connection.commit()
