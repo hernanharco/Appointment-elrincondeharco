@@ -95,6 +95,7 @@ app = FastAPI(
 )
 
 # --- Middlewares ---
+
 @app.middleware("http")
 async def log_route_metrics(request: Request, call_next):
     start_time = time.perf_counter()
@@ -117,11 +118,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(api_router, prefix=settings.API_V1_STR)
+# --- Rutas de Utilidad (Fuera del prefijo v1) ---
 
 @app.get("/")
 async def root():
     return {"status": "online", "timestamp": datetime.now().isoformat()}
 
+# PARCHE 1: Endpoint de Salud para el HealthStore del Frontend
+@app.get("/health")
+async def health_check():
+    """
+    Endpoint para que el frontend valide la conexión. 
+    Se coloca fuera de v1 por compatibilidad con sistemas de monitoreo.
+    """
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "environment": settings.ENVIRONMENT
+    }
+
+# --- Inclusión de Rutas Principales ---
+app.include_router(api_router, prefix=settings.API_V1_STR)
+
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000)
+    # PARCHE 2: Soporte para Proxies (Fundamental para Dokploy/HTTPS)
+    # proxy_headers=True y forwarded_allow_ips='*' resuelven el error de "Unsafe attempt"
+    uvicorn.run(
+        "app.main:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        proxy_headers=True, 
+        forwarded_allow_ips="*"
+    )
