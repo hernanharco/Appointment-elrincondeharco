@@ -65,5 +65,5 @@ else
 fi
 
 # 4. Lanzar Aplicación con el proceso 1 (Señales de Docker)
-echo "🚀 Iniciando servidor FastAPI..."
-exec poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000
+echo "🚀 Iniciando servidor FastAPI con soporte de proxy..."
+exec poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
