@@ -14,7 +14,8 @@ from sqlalchemy import text, inspect, schema
 
 from app.core.config import settings
 from app.db.session import SessionLocal, engine
-from app.models.base import Base  # Asegúrate de que tus modelos hereden de esta Base
+# Importamos Base desde el __init__ de models para asegurar el registro de todos los modelos
+from app.models import Base 
 from app.api.v1.api_route import api_router
 from app.models.metrics import ApiRouteMetric
 
@@ -58,42 +59,30 @@ async def lifespan(app: FastAPI):
         })
         print("📊 LangSmith Tracing: ENABLED")
 
-    # 3. Sincronización de Base de Datos y Schemas
+    # 3. Sincronización de Base de Datos y Schemas (BLOQUEANTE)
     print(f"--- Verificando conexión a {settings.NAME_DATABASE} ---")
     try:
-        def sync_db():
-            with engine.connect() as conn:
-                # A. Crear el esquema si no es el 'public' y no existe
-                if settings.pg_schema and settings.pg_schema != "public":
-                    print(f"🛠️ Asegurando existencia del esquema: {settings.pg_schema}")
-                    conn.execute(schema.CreateSchema(settings.pg_schema, if_not_exists=True))
-                    conn.commit()
+        # Usamos engine.begin() para asegurar que todo sea una transacción atómica al arrancar
+        with engine.begin() as conn:
+            # A. Crear el esquema si no es el 'public' y no existe
+            if settings.pg_schema and settings.pg_schema != "public":
+                print(f"🛠️ Asegurando existencia del esquema: {settings.pg_schema}")
+                conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.pg_schema}"))
 
-                # B. Inspección de tablas existentes en el esquema configurado
-                inspector = inspect(conn)
-                existing_tables = inspector.get_table_names(schema=settings.pg_schema)
-                metadata_tables = Base.metadata.tables.keys()
-                
-                # Identificar qué hay de nuevo
-                new_tables = [t for t in metadata_tables if t not in existing_tables]
-                
-                # C. Crear tablas y tipos (como los ENUMs que fallaban)
-                Base.metadata.create_all(bind=engine)
-                
-                if new_tables:
-                    print(f"✅ Tablas creadas en '{settings.pg_schema}': {', '.join(new_tables)}")
-                else:
-                    print(f"info: Schema '{settings.pg_schema}' ya está sincronizado.")
+            # B. Activar la extensión pgvector (Obligatorio para la memoria de agentes)
+            print(f"🧬 Verificando extensión pgvector en esquema: {settings.pg_schema}")
+            conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS vector SCHEMA {settings.pg_schema} CASCADE"))
 
-        # Ejecutamos la lógica síncrona de SQLAlchemy en un hilo separado
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, sync_db)
+            # C. Crear tablas
+            # Al importar 'Base' de 'app.models', SQLAlchemy ya conoce ChatMessage, Metrics, etc.
+            print("📑 Sincronizando todas las tablas...")
+            Base.metadata.create_all(bind=conn)
+            print("✅ Base de datos y extensiones sincronizadas correctamente.")
 
     except Exception as e:
-        print(f"❌ ERROR CRÍTICO EN DB: {str(e)}", file=sys.stderr)
-        # En desarrollo podrías querer que siga, en prod mejor que falle el despliegue
+        print(f"❌ ERROR CRÍTICO EN DB AL ARRANCAR: {str(e)}", file=sys.stderr)
         if settings.is_production:
-            raise
+            raise e # Detenemos el despliegue si la DB no está lista en producción
 
     # 4. LangGraph Checkpointer (Persistencia de Agentes)
     from app.agents.routing.graph import graph
@@ -178,7 +167,6 @@ async def health_check():
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
 
-# --- Punto de entrada para ejecución directa ---
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
