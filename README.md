@@ -187,3 +187,5 @@ Este proyecto es software propietario desarrollado para uso comercial.
 ---
 
 **Desarrollado con ❤️ usando FastAPI, Astro, Svelte 5 y Neon PostgreSQL**
+# appointment_restaurant_elricondeharco.com
+# appointment_restaurant_elricondeharco.com
